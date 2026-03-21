@@ -7,36 +7,14 @@
 -- - To avoid incidental or low-volume referrals, look for significant referral relationships, meaning `transaction_count >= 50` and `avg_day_wait < 50`.
 
 
-SELECT *
-FROM hop_team
-where to_npi = 1851499727;
---hop_team has total 217911308 rows 
-
-SELECT *
-FROM nppes
-LIMIT 10;
---nppes has total 8180697 rows
-
-SELECT *
-FROM nucc
-LIMIT 5;
--- nucc has 883 rows 
-
-SELECT *
-FROM zip_cbsa 
-where usps_zip_pref_state = 'TN' AND cbsa= '34980';
--- zip_cbsa has 47484 rows
-
-
-DROP MATERIALIZED VIEW IF EXISTS hop_limited_to_npi CASCADE;
-DROP MATERIALIZED VIEW IF EXISTS hop_limited_from_npi CASCADE;
-DROP MATERIALIZED VIEW IF EXISTS nppes_taxonomy_filter CASCADE;
-DROP MATERIALIZED VIEW IF EXISTS hop_limited CASCADE;
-
 
 
 -- - To avoid incidental or low-volume referrals, look for significant referral relationships, meaning `transaction_count >= 50` and `avg_day_wait < 50`.
 
+-- Create and update view: 
+-- reduce number of transactions to significant referral relationships
+
+DROP MATERIALIZED VIEW IF EXISTS HOP_LIMITED CASCADE;
 CREATE MATERIALIZED VIEW HOP_LIMITED AS
 SELECT
 	*
@@ -48,6 +26,11 @@ WHERE
 
 
 ---- - For each provider, identify their primary taxonomy code. In the NPPES data, this is the taxonomy code whose corresponding taxonomy switch column is marked wit
+
+-- Create and update view: 
+-- Pull out primary taxonomy codes for npis in tennessee
+
+DROP MATERIALIZED VIEW IF EXISTS nppes_taxonomy_filter CASCADE;
 
 CREATE MATERIALIZED VIEW nppes_taxonomy_filter AS
 			SELECT
@@ -91,6 +74,10 @@ CREATE MATERIALIZED VIEW nppes_taxonomy_filter AS
 
 -- - For the referring providers, filter to Primary Care Physicians (PCPs) only: You can look for classifications of "Family Medicine", "Internal Medicine", "Pediatrics", and "General Practice"
 
+-- Create and update view: 
+-- from npi patients filtered by specific classifications
+
+DROP MATERIALIZED VIEW IF EXISTS hop_limited_from_npi CASCADE;
 CREATE MATERIALIZED VIEW hop_limited_from_npi AS
 	SELECT
 		*
@@ -107,14 +94,9 @@ CREATE MATERIALIZED VIEW hop_limited_from_npi AS
 		);
 
 
-SELECT *
-FROM hop_limited_from_npi
-LIMIT 5;
-
-SELECT * 
-FROM nppes_taxonomy_filter
-LIMIT 5;
-
+-- Create and update view: 
+-- referred npis for patients filtered by only hospitals
+DROP MATERIALIZED VIEW IF EXISTS hop_limited_to_npi CASCADE;
 		
 CREATE MATERIALIZED VIEW hop_limited_to_npi AS
 	SELECT
@@ -128,36 +110,40 @@ CREATE MATERIALIZED VIEW hop_limited_to_npi AS
 		;
 
 -- - Only referrals in the Nashville CBSA. 
--- CODE: pulls out nashville cbsa but need to add this to the nppes_taxonomy_filter VIEW
+-- Create and update view: 
+-- Final from npi dataset including nashville cbsa filter
 
+DROP MATERIALIZED VIEW IF EXISTS nash_from_npi CASCADE;
 CREATE MATERIALIZED VIEW nash_from_npi AS
 WITH cbsa_nash_zip AS 
 (SELECT DISTINCT(zip)
 FROM zip_cbsa
 WHERE usps_zip_pref_state = 'TN' AND cbsa = '34980')
 SELECT n.*,
---lf.primary_taxonomy_code,
-code,
-lf.grouping,
-classification,
-specialization,
-definition,
-notes,
-display_name,
-lf.section,
-from_npi,
-to_npi,
-patient_count,
-transaction_count,
-average_day_wait,
-std_day_wait
+	--lf.primary_taxonomy_code,
+	code,
+	lf.grouping,
+	classification,
+	specialization,
+	definition,
+	notes,
+	display_name,
+	lf.section,
+	from_npi,
+	to_npi,
+	patient_count,
+	transaction_count,
+	average_day_wait,
+	std_day_wait
 FROM nppes_taxonomy_filter AS n
 INNER JOIN cbsa_nash_zip AS c 
 ON c.zip = LEFT(n.address_postal_code,5)::NUMERIC
 INNER JOIN hop_limited_from_npi AS lf
 USING(npi);
 
-
+-- Create and update view: 
+-- Final to npi dataset including nashville cbsa filter
+DROP MATERIALIZED VIEW IF EXISTS nash_to_npi CASCADE;
 CREATE MATERIALIZED VIEW nash_to_npi AS
 WITH cbsa_nash_zip AS 
 (SELECT DISTINCT(zip)
@@ -165,20 +151,20 @@ FROM zip_cbsa
 WHERE usps_zip_pref_state = 'TN' AND cbsa = '34980')
 SELECT n.*,
 --lf.primary_taxonomy_code,
-code,
-lf.grouping,
-classification,
-specialization,
-definition,
-notes,
-display_name,
-lf.section,
-from_npi,
-to_npi,
-patient_count,
-transaction_count,
-average_day_wait,
-std_day_wait
+	code,
+	lf.grouping,
+	classification,
+	specialization,
+	definition,
+	notes,
+	display_name,
+	lf.section,
+	from_npi,
+	to_npi,
+	patient_count,
+	transaction_count,
+	average_day_wait,
+	std_day_wait
 FROM nppes_taxonomy_filter AS n
 INNER JOIN cbsa_nash_zip AS c 
 ON c.zip = LEFT(n.address_postal_code,5)::NUMERIC
@@ -186,11 +172,60 @@ INNER JOIN hop_limited_to_npi AS lf
 USING(npi);
 
 
+-- Create a view table with Hop patient transactions only for to-npi and from-npi of interest
+-- one row = one patient transaction between both referring and receiving providers of interest 
+DROP MATERIALIZED VIEW IF EXISTS HOP_LIMITED_CLEANED_PROVIDERS CASCADE;
+CREATE MATERIALIZED VIEW hop_limited_cleaned_providers AS
+	WITH nash_from_npi_providerid AS (
+	   SELECT DISTINCT npi
+	   FROM nash_from_npi
+),
+	nash_to_npi_providerid AS (
+	  SELECT DISTINCT npi
+	   FROM nash_to_npi
+)
+	SELECT hl.*
+	FROM hop_limited AS hl
+	INNER JOIN nash_from_npi_providerid AS nn
+	ON hl.from_npi = nn.npi
+	INNER JOIN nash_to_npi_providerid AS nt
+	ON hl.to_npi = nt.npi;
 
--- ### 1. Create an Analytical Dataset
--- Create a materialized view that joins the necessary tables and applies the project filters:
--- - Primary taxonomy for each provider
--- - PCP specialties for referring providers
--- - Hospitals for receiving providers
--- - Nashville CBSA
--- - Significant referral relationships
+SELECT *
+FROM hop_limited_cleaned_providers
+LIMIT 5;
+
+
+-- Create a view table with ONLY receiving provider contact information
+-- one row = one provider id with relevant info
+DROP MATERIALIZED VIEW IF EXISTS hospital_receiving_provider_information CASCADE;
+
+CREATE MATERIALIZED VIEW hospital_receiving_provider_information AS
+WITH
+	NASH_TO_NPI_PROVIDERID AS (
+		SELECT DISTINCT
+			NPI
+		FROM
+			NASH_TO_NPI)
+SELECT * 
+FROM nppes_taxonomy_filter as ntf
+WHERE ntf.npi IN (SELECT * FROM NASH_TO_NPI_PROVIDERID);
+
+
+-- Create a view table with ONLY referring provider contact information
+-- one row = one reffering provider id with relevant info
+DROP MATERIALIZED VIEW IF EXISTS referring_provider_information CASCADE;
+
+CREATE MATERIALIZED VIEW referring_provider_information AS
+WITH
+	NASH_FROM_NPI_PROVIDERID AS (
+		SELECT DISTINCT
+			NPI
+		FROM
+			NASH_FROM_NPI)
+SELECT * 
+FROM nppes_taxonomy_filter as ntf
+WHERE ntf.npi IN (SELECT * FROM NASH_FROM_NPI_PROVIDERID);
+
+
+
