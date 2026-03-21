@@ -1,0 +1,196 @@
+-- ## Project Focus
+-- To narrow the scope of the analysis, apply the following filters:
+-- - For each provider, identify their primary taxonomy code. In the NPPES data, this is the taxonomy code whose corresponding taxonomy switch column is marked with 'Y'.
+-- - For the referring providers, filter to Primary Care Physicians (PCPs) only: You can look for classifications of "Family Medicine", "Internal Medicine", "Pediatrics", and "General Practice"
+-- - For the receiving providers, filter to hospitals.
+-- - Only referrals in the Nashville CBSA.  
+-- - To avoid incidental or low-volume referrals, look for significant referral relationships, meaning `transaction_count >= 50` and `avg_day_wait < 50`.
+
+
+SELECT *
+FROM hop_team
+where to_npi = 1851499727;
+--hop_team has total 217911308 rows 
+
+SELECT *
+FROM nppes
+LIMIT 10;
+--nppes has total 8180697 rows
+
+SELECT *
+FROM nucc
+LIMIT 5;
+-- nucc has 883 rows 
+
+SELECT *
+FROM zip_cbsa 
+where usps_zip_pref_state = 'TN' AND cbsa= '34980';
+-- zip_cbsa has 47484 rows
+
+
+DROP MATERIALIZED VIEW IF EXISTS hop_limited_to_npi CASCADE;
+DROP MATERIALIZED VIEW IF EXISTS hop_limited_from_npi CASCADE;
+DROP MATERIALIZED VIEW IF EXISTS nppes_taxonomy_filter CASCADE;
+DROP MATERIALIZED VIEW IF EXISTS hop_limited CASCADE;
+
+
+
+-- - To avoid incidental or low-volume referrals, look for significant referral relationships, meaning `transaction_count >= 50` and `avg_day_wait < 50`.
+
+CREATE MATERIALIZED VIEW HOP_LIMITED AS
+SELECT
+	*
+FROM
+	HOP_TEAM
+WHERE
+	TRANSACTION_COUNT >= 50
+	AND AVERAGE_DAY_WAIT < 50;
+
+
+---- - For each provider, identify their primary taxonomy code. In the NPPES data, this is the taxonomy code whose corresponding taxonomy switch column is marked wit
+
+CREATE MATERIALIZED VIEW nppes_taxonomy_filter AS
+			SELECT
+				NPI, 
+				entity_type_code,
+				organization_name,
+				last_name,
+				first_name,
+				middle_name,
+				name_prefix_text,
+				name_suffix_text,
+				credential_text,
+				first_line_address,
+				second_line_address,
+				address_city_name,
+				address_state_name,
+				address_postal_code,
+				CASE
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_1 IN ('Y', 'X') THEN HEALTHCARE_TAXONOMY_CODE_1
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_2 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_2
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_3 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_3
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_4 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_4
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_5 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_5
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_6 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_6
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_7 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_7
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_8 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_8
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_9 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_9
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_10 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_10
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_11 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_11
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_12 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_12
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_13 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_13
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_14 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_14
+					WHEN HEALTHCARE_PRIMARY_TAXONOMY_SWITCH_15 = 'Y' THEN HEALTHCARE_TAXONOMY_CODE_15
+					ELSE null 
+				END AS PRIMARY_TAXONOMY_CODE
+			FROM
+				NPPES
+			WHERE address_state_name = 'TN';
+
+
+
+-- - For the referring providers, filter to Primary Care Physicians (PCPs) only: You can look for classifications of "Family Medicine", "Internal Medicine", "Pediatrics", and "General Practice"
+
+CREATE MATERIALIZED VIEW hop_limited_from_npi AS
+	SELECT
+		*
+	FROM
+		nppes_taxonomy_filter AS PT
+		INNER JOIN NUCC AS N ON PT.PRIMARY_TAXONOMY_CODE = N.CODE
+		INNER JOIN hop_limited AS H ON H.FROM_NPI = PT.NPI
+	WHERE
+		N.CLASSIFICATION IN (
+			'Family Medicine',
+			'Internal Medicine',
+			'Pediatrics',
+			'General Practice'
+		);
+
+
+SELECT *
+FROM hop_limited_from_npi
+LIMIT 5;
+
+SELECT * 
+FROM nppes_taxonomy_filter
+LIMIT 5;
+
+		
+CREATE MATERIALIZED VIEW hop_limited_to_npi AS
+	SELECT
+		*
+	FROM
+		nppes_taxonomy_filter AS PT
+		INNER JOIN NUCC AS N ON PT.PRIMARY_TAXONOMY_CODE = N.CODE
+		INNER JOIN hop_limited AS H ON H.TO_NPI = PT.NPI
+	WHERE
+	PT.entity_type_code = 2 AND N.grouping Ilike '%hospital%'
+		;
+
+-- - Only referrals in the Nashville CBSA. 
+-- CODE: pulls out nashville cbsa but need to add this to the nppes_taxonomy_filter VIEW
+
+CREATE MATERIALIZED VIEW nash_from_npi AS
+WITH cbsa_nash_zip AS 
+(SELECT DISTINCT(zip)
+FROM zip_cbsa
+WHERE usps_zip_pref_state = 'TN' AND cbsa = '34980')
+SELECT n.*,
+--lf.primary_taxonomy_code,
+code,
+lf.grouping,
+classification,
+specialization,
+definition,
+notes,
+display_name,
+lf.section,
+from_npi,
+to_npi,
+patient_count,
+transaction_count,
+average_day_wait,
+std_day_wait
+FROM nppes_taxonomy_filter AS n
+INNER JOIN cbsa_nash_zip AS c 
+ON c.zip = LEFT(n.address_postal_code,5)::NUMERIC
+INNER JOIN hop_limited_from_npi AS lf
+USING(npi);
+
+
+CREATE MATERIALIZED VIEW nash_to_npi AS
+WITH cbsa_nash_zip AS 
+(SELECT DISTINCT(zip)
+FROM zip_cbsa
+WHERE usps_zip_pref_state = 'TN' AND cbsa = '34980')
+SELECT n.*,
+--lf.primary_taxonomy_code,
+code,
+lf.grouping,
+classification,
+specialization,
+definition,
+notes,
+display_name,
+lf.section,
+from_npi,
+to_npi,
+patient_count,
+transaction_count,
+average_day_wait,
+std_day_wait
+FROM nppes_taxonomy_filter AS n
+INNER JOIN cbsa_nash_zip AS c 
+ON c.zip = LEFT(n.address_postal_code,5)::NUMERIC
+INNER JOIN hop_limited_to_npi AS lf
+USING(npi);
+
+
+
+-- ### 1. Create an Analytical Dataset
+-- Create a materialized view that joins the necessary tables and applies the project filters:
+-- - Primary taxonomy for each provider
+-- - PCP specialties for referring providers
+-- - Hospitals for receiving providers
+-- - Nashville CBSA
+-- - Significant referral relationships
