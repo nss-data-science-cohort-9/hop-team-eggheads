@@ -42,9 +42,12 @@ This dataset will serve as the foundation for your SQL analysis, Neo4j network e
 
 ### 2. SQL Analysis
 Using PostgreSQL:  
-- Identify PCPs who refer patients and the distribution of their referrals across major hospitals.  
-- Find PCPs who refer few or no patients to Vanderbilt but send patients to competitor hospitals.  
+- Identify PCPs who refer patients and the distribution of their referrals across major hospitals.
+* group by hospital entities   
+- Find PCPs who refer few or no patients to Vanderbilt but send patients to competitor hospitals.
+* filter hospital entitites by Vanderbilt vs competitor etc  
 - Aggregate by PCP specialty to understand which specialties are underrepresented in Vanderbilt’s referral network.
+
 
 ### 3. Neo4j Network Analysis
 - Create a csv for the provider network in the Nashville CBSA.
