@@ -5,16 +5,13 @@
 -- - For the receiving providers, filter to hospitals.
 -- - Only referrals in the Nashville CBSA.  
 -- - To avoid incidental or low-volume referrals, look for significant referral relationships, meaning `transaction_count >= 50` and `avg_day_wait < 50`.
-
+-- reduce number of transactions to significant referral relationships
 
 
 
 -- - To avoid incidental or low-volume referrals, look for significant referral relationships, meaning `transaction_count >= 50` and `avg_day_wait < 50`.
-
--- Create and update view: 
 -- reduce number of transactions to significant referral relationships
 
-DROP MATERIALIZED VIEW IF EXISTS HOP_LIMITED CASCADE;
 CREATE MATERIALIZED VIEW HOP_LIMITED AS
 SELECT
 	*
@@ -103,8 +100,10 @@ CREATE MATERIALIZED VIEW hop_limited_to_npi AS
 		*
 	FROM
 		nppes_taxonomy_filter AS PT
-		INNER JOIN NUCC AS N ON PT.PRIMARY_TAXONOMY_CODE = N.CODE
-		INNER JOIN hop_limited AS H ON H.TO_NPI = PT.NPI
+		INNER JOIN NUCC AS N 
+		ON PT.PRIMARY_TAXONOMY_CODE = N.CODE
+		INNER JOIN hop_limited AS H 
+		ON H.TO_NPI = PT.NPI
 	WHERE
 	PT.entity_type_code = 2 AND N.grouping Ilike '%hospital%'
 		;
@@ -175,25 +174,46 @@ USING(npi);
 -- Create a view table with Hop patient transactions only for to-npi and from-npi of interest
 -- one row = one patient transaction between both referring and receiving providers of interest 
 DROP MATERIALIZED VIEW IF EXISTS HOP_LIMITED_CLEANED_PROVIDERS CASCADE;
-CREATE MATERIALIZED VIEW hop_limited_cleaned_providers AS
-	WITH nash_from_npi_providerid AS (
-	   SELECT DISTINCT npi
-	   FROM nash_from_npi
-),
-	nash_to_npi_providerid AS (
-	  SELECT DISTINCT npi
-	   FROM nash_to_npi
-)
-	SELECT hl.*
-	FROM hop_limited AS hl
-	INNER JOIN nash_from_npi_providerid AS nn
-	ON hl.from_npi = nn.npi
-	INNER JOIN nash_to_npi_providerid AS nt
-	ON hl.to_npi = nt.npi;
+-- CREATE MATERIALIZED VIEW hop_limited_cleaned_providers AS
+-- 	WITH nash_from_npi_providerid AS (
+-- 	   SELECT DISTINCT npi
+-- 	   FROM nash_from_npi
+-- ),
+-- 	nash_to_npi_providerid AS (
+-- 	  SELECT DISTINCT npi
+-- 	   FROM nash_to_npi
+-- )
+-- 	SELECT hl.*
+-- 	FROM hop_limited AS hl
+-- 	INNER JOIN nash_from_npi_providerid AS nn
+-- 	ON hl.from_npi = nn.npi
+-- 	INNER JOIN nash_to_npi_providerid AS nt
+-- 	ON hl.to_npi = nt.npi;
 
 SELECT *
 FROM hop_limited_cleaned_providers
 LIMIT 5;
+
+CREATE MATERIALIZED VIEW HOP_LIMITED_CLEANED_PROVIDERS AS
+WITH
+	NASH_FROM_NPI_PROVIDERID AS (
+		SELECT DISTINCT
+			NPI
+		FROM
+			NASH_FROM_NPI
+	),
+	NASH_TO_NPI_PROVIDERID AS (
+		SELECT DISTINCT
+			NPI, classification 
+		FROM
+			NASH_TO_NPI
+	)
+SELECT
+	HL.*, NT.classification as hospital_type
+FROM
+	HOP_LIMITED AS HL
+	INNER JOIN NASH_FROM_NPI_PROVIDERID AS NN ON HL.FROM_NPI = NN.NPI
+	INNER JOIN NASH_TO_NPI_PROVIDERID AS NT ON HL.TO_NPI = NT.NPI;
 
 
 -- Create a view table with ONLY receiving provider contact information
@@ -228,4 +248,56 @@ FROM nppes_taxonomy_filter as ntf
 WHERE ntf.npi IN (SELECT * FROM NASH_FROM_NPI_PROVIDERID);
 
 
+-- ### 2. SQL Analysis
+-- Using PostgreSQL:  
+-- - Identify PCPs who refer patients and the distribution of their referrals across major hospitals.  
+-- - Find PCPs who refer few or no patients to Vanderbilt but send patients to competitor hospitals.  
+-- - Aggregate by PCP specialty to understand which specialties are underrepresented in Vanderbilt’s referral network.
+
+
+SELECT  classification , COUNT (classification) AS no_of_times_reffered_to_hospitals
+FROM nash_to_npi
+group by classification
+ORDER BY no_of_times_reffered_to_hospitals DESC
+limit 5;
+
+
+
+SELECT *
+FROM nash_from_npi
+LIMIT 5;
+
+SELECT *
+FROM hop_limited_cleaned_providers
+LIMIT 5;
+
+
+
+-- - Identify PCPs who refer patients and the distribution of their referrals across major hospitals.  
+
+SELECT from_npi, hospital_type, COUNT (hospital_type) AS no_of_times_reffered_to_hospitals
+FROM hop_limited_cleaned_providers 
+GROUP BY from_npi, hospital_type
+ORDER BY no_of_times_reffered_to_hospitals DESC
+
+SELECT * 
+FROM hop_limited_cleaned_providers 
+LIMIT 5;
+
+SELECT *
+FROM hop_limited_cleaned_providers
+LIMIT 5;
+-- - Find PCPs who refer few or no patients to Vanderbilt but send patients to competitor hospitals.  
+SELECT *
+FROM nash_to_npi
+WHERE organization_name ILIKE '%vand%'
+
+
+SELECT hc.from_npi, nt.classification, COUNT (nt.classification) AS no_of_times_reffered_to_hospitals
+FROM hop_limited_cleaned_providers AS  hc
+INNER JOIN nash_to_npi AS nt
+ON hc.to_npi = nt.npi
+WHERE organization_name <> 'VANDERBILT UNIVERSITY MEDICAL CENTER'
+GROUP BY hc.from_npi, nt.classification
+ORDER BY no_of_times_reffered_to_hospitals DESC
 
