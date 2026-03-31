@@ -196,7 +196,8 @@ name_for_commuityid
 
 SM edits: Making a network graph visual
 
-source of code: https://www.statworx.com/en/content-hub/blog/interactive-network-visualization-with-r#:~:text=visNetwork%20has%20many%20adjustments%20to,them%20in%20the%20right%20format.
+source of code: 
+https://www.statworx.com/en/content-hub/blog/interactive-network-visualization-with-r#:~:text=visNetwork%20has%20many%20adjustments%20to,them%20in%20the%20right%20format.
 
 https://cran.r-project.org/web/packages/visNetwork/vignettes/Introduction-to-visNetwork.html
 
@@ -265,7 +266,6 @@ Add in a column for the nodes that have the name for the nodes, using the full_n
 ```{r}
 
 ## filter out only the columns needed before the merge
-
 #take out only the columns with the pcp npi and name from the dataframe
 name_for_nodes <- hop_referral_pcp_hosp |> select(from_npi, full_name, group_cluster)
 
@@ -343,7 +343,6 @@ visNetwork(clean_data_for_node, clean_data_for_edges, width="100%") |>
   visGroups() |>
   #add a legend 
   visLegend() |> 
-
   #add navigation tools 
   visInteraction (navigationButtons = TRUE) |> 
   visClusteringByGroup(groups, force= TRUE) |>
@@ -351,3 +350,26 @@ visNetwork(clean_data_for_node, clean_data_for_edges, width="100%") |>
 #add code to make dot clustering easier (so there is no overlap)
   visPhysics(stabilization = FALSE, solver = "barnesHut", barnesHut = list(gravitationalConstant = -10000))
 ```
+
+
+
+
+check specialty for list 
+hop_referral_pcp_hosp
+```{r}
+hop_referral_pcp_hosp
+```
+
+
+```{r}
+
+user_choice <- hop_referral_pcp_hosp |>  distinct(pcp_class) |> pull()
+
+
+
+user_choice[1]
+```
+```{r}
+hop_referral_pcp_hosp |> filter(pcp_class == user_choice[1])
+```
+
