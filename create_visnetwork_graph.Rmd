@@ -1,0 +1,353 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+---
+NSS eggheads: Network analysis between medical providers
+project: hop_team
+---
+
+Load libraries
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(data.table)
+library(dplyr)
+library(plotly)
+library(igraph)
+library(igraphdata)
+library(visNetwork)
+```
+
+Load in datasets
+
+```{r}
+
+hop_referral <- read_csv("data/provider_network_nash_cbsa.csv")
+
+patients_community_id <- read_csv("data/neo4j_query_table_data_patients.csv")
+
+#transactions_community_id <- read_csv("data/neo4j_query_table_data_transactions.csv")
+
+```
+
+Merge community ID from neo4J algorithm to the transaction dataset
+```{r}
+
+hop_referral_merged <- merge(
+  hop_referral,
+  
+  patients_community_id,
+  by.x = "from_npi", by.y = "npi"
+)
+
+hop_referral_merged  
+```
+rename columns
+```{r}
+
+hop_referral_merged_pcp <- rename(hop_referral_merged, c("pcp_communityid" = "communityId"))
+
+hop_referral_merged_pcp
+
+```
+
+```{r}
+
+hop_referral_merged_pcp_hosp <- merge(
+  hop_referral_merged_pcp,
+  patients_community_id,
+  by.x = "to_npi", by.y = "npi"
+)
+
+hop_referral_merged_pcp_hosp
+
+```
+
+```{r}
+
+hop_referral_pcp_hosp <- rename(hop_referral_merged_pcp_hosp, c("hospital_communityid" = "communityId"))
+
+hop_referral_pcp_hosp
+
+```
+Save the new csv file
+```{r}
+write.csv(hop_referral_pcp_hosp, file = "data/hop_referral_pcp_hosp.csv")
+```
+
+
+Explore unique community IDs
+
+```{r}
+
+hop_referral_pcp_hosp %>% 
+  group_by(to_organization) %>% 
+  summarise(num_id = n_distinct(hospital_communityid)) %>% 
+  arrange(desc(num_id))
+```
+
+Identify only VUMC network ID
+```{r}
+vumc_id<- hop_referral_pcp_hosp %>% 
+  filter(
+    to_organization == "VANDERBILT UNIVERSITY MEDICAL CENTER"
+  ) %>% 
+  distinct(
+    hospital_communityid
+  ) |> pull()
+vumc_id
+```
+
+Now load the list for the Other three big hospital chains
+HCA HEALTH SERVICES OF TENNESSEE, INC.
+
+```{r}
+
+HCA_id<- hop_referral_pcp_hosp %>% 
+  filter(
+    to_organization == "HCA HEALTH SERVICES OF TENNESSEE, INC."
+  ) %>% 
+  distinct(
+    hospital_communityid
+  ) |> pull()
+HCA_id
+```
+SAINT THOMAS WEST HOSPITAL
+
+```{r}
+
+ST_id<- hop_referral_pcp_hosp %>% 
+  filter(
+    to_organization == "SAINT THOMAS WEST HOSPITAL"
+  ) %>% 
+  distinct(
+    hospital_communityid
+  ) |> pull()
+ST_id
+```
+Now identify all other unique community id from hospitals 
+
+```{r}
+exclude_chain_id <- c(vumc_id, HCA_id, ST_id)
+exclude_chain_id
+#create a list of the community ids that correspond to other hospitals
+single_community_id <- hop_referral_pcp_hosp |> filter(!(hospital_communityid %in% exclude_chain_id)) |> distinct(hospital_communityid) |> pull()
+single_community_id
+```
+
+Create unique names for the cluster id to make grouping easier 
+```{r}
+#pull out community id that is exclusively vumc
+only_vumc <- setdiff(vumc_id, c(HCA_id, ST_id))
+only_vumc
+
+#pull out community id that is exclusively hca
+only_HCA <- setdiff(HCA_id, c(vumc_id, ST_id))
+only_HCA
+
+#pull out community id that is exclusively ST
+only_ST <- setdiff(ST_id, c(vumc_id, HCA_id))
+only_ST
+
+#pull out the community id that is SHARED between VUMC and any other hospital
+vumc_overlap <- setdiff(exclude_chain_id, c(only_vumc, only_HCA, only_ST))
+vumc_overlap
+
+#create a new dataframe with a case_when to get unique cluster groups for easier graphing 
+
+hop_referral_pcp_hosp <-hop_referral_pcp_hosp |> 
+  mutate(group_cluster = case_when( 
+    hospital_communityid %in% only_vumc ~ 'vumc', 
+    hospital_communityid %in% only_HCA ~ 'HCA', 
+    hospital_communityid %in% only_ST ~ 'St Thomas', 
+    hospital_communityid %in% vumc_overlap ~ 'VUMC overlap', 
+    hospital_communityid %in% single_community_id[1] ~ 'community 1', 
+    hospital_communityid %in% single_community_id[2] ~ 'community 2',
+    hospital_communityid %in% single_community_id[3] ~ 'community 3',
+    hospital_communityid %in% single_community_id[4] ~ 'community 4',
+    hospital_communityid %in% single_community_id[5] ~ 'community 5',
+    hospital_communityid %in% single_community_id[6] ~ 'community 6',
+    hospital_communityid %in% single_community_id[7] ~ 'community 7', 
+    .default= 'other'))
+hop_referral_pcp_hosp
+```
+Create a list with more descriptive names for the community IDs for graphing
+```{r}
+
+name_for_commuityid<- c("VUMC" = only_vumc, 
+  "VUMC shared"= vumc_overlap, 
+  "HCA" = only_HCA, 
+  "St thomas" =only_ST, 
+  "community 1" = single_community_id[1], 
+  "community 2" = single_community_id[2], 
+  "community 3" = single_community_id[3], 
+  "community 4" = single_community_id[4],
+  "community 5" = single_community_id[5],
+  "community 6" = single_community_id[6],
+  "community 7" = single_community_id[7])
+name_for_commuityid
+
+
+#switch the order 
+name_for_commuityid <- setNames(names(name_for_commuityid), name_for_commuityid)
+name_for_commuityid
+```
+
+SM edits: Making a network graph visual
+
+source of code: https://www.statworx.com/en/content-hub/blog/interactive-network-visualization-with-r#:~:text=visNetwork%20has%20many%20adjustments%20to,them%20in%20the%20right%20format.
+
+https://cran.r-project.org/web/packages/visNetwork/vignettes/Introduction-to-visNetwork.html
+
+https://kateto.net/network-visualization
+
+Dataset details:
+* nodes -- data frame with the nodes (aka characters) --> this will be npi
+* edges -- data frame with the connections --> this will be num of patients
+
+
+### Decription from code source
+Nodes:
+
+label: A column that defines how a node is labelled
+value: Defines the size of a node inside the network
+group: Assigns a node to a group; this can be a result of a cluster analysis or a community detection
+shape: Defines how a node is presented. For example as a circle, square or triangle
+color: Defines the color of a node
+title: Sets the tooltip, which occurs when you hover over a node (this can be HTML or character)
+shadow: Defines if a node has a shadow or not (TRUE/FALSE)
+Edges:
+
+label, title, shadow
+length, width: Defines the length/width of an edge inside the network
+arrows: Defines where to set a possible arrow on the edge
+dashes: Defines if the edges should be dashed or not (TRUE/FALSE)
+smooth: Smooth lines (TRUE/FALSE)
+
+
+First make the edges, which will be the from_npi, to_npi (each a 'node') and the line will be patient count
+
+```{r}
+
+#Select only the 'to' and 'from' npi from the dataset, and the number of patients for the edges
+data_for_edges <- hop_referral_merged_pcp_hosp |> 
+  select(to_npi, from_npi, patient_count)
+data_for_edges
+
+```
+
+
+```{r}
+### Create a smaller width size by dividing all patient number by 100, which makes visual graphing easier 
+clean_data_for_edges <- data_for_edges |> mutate(width_100 = round(patient_count/100))
+
+#clean_data_for_edges <- data_for_edges |> select(from, to, width_100)
+colnames(clean_data_for_edges) <- c('from', 'to', 'title', 'width')
+
+## add in a text information to the 'title' column so that the figure has clear labeling
+
+clean_data_for_edges<- clean_data_for_edges |> mutate(title= paste("patients: ", title))
+clean_data_for_edges
+```
+
+then make the nodes themselves. This is JUST the list of the npi as 'id' and the group number ('community id') from the clustering algorithm
+
+```{r}
+data_for_nodes <- patients_community_id
+colnames(data_for_nodes) <- c("id", "group")
+
+data_for_nodes
+
+```
+
+Add in a column for the nodes that have the name for the nodes, using the full_name and to_organization information connected to the npi
+```{r}
+
+## filter out only the columns needed before the merge
+
+#take out only the columns with the pcp npi and name from the dataframe
+name_for_nodes <- hop_referral_pcp_hosp |> select(from_npi, full_name, group_cluster)
+
+# merge it into the node in order to make it a 'label'
+pcp_id_node <- left_join(patients_community_id, name_for_nodes, by= join_by (npi == from_npi))
+
+
+## repeat but for to_npi 
+name_for_nodes <- hop_referral_pcp_hosp |> select(to_npi, to_organization, group_cluster)
+
+hosp_pcp_id_node <- left_join(pcp_id_node, name_for_nodes, by= join_by (npi == to_npi))
+hosp_pcp_id_node
+
+#merge the node values together 
+hosp_pcp_id_node <- hosp_pcp_id_node |> mutate(group_cluster = coalesce(group_cluster.x, group_cluster.y))
+
+#pull out only values needed for the graphing
+clean_data_for_node <- hosp_pcp_id_node |>
+  #Add a new column that pulls all the not-null values from the to_npi and from_npi merges
+  mutate(label = tolower(coalesce(full_name, to_organization))) |>
+  #pull out only the columns necessary for the nodes
+  select(npi, communityId, label, group_cluster) |>
+  #drop duplicates produced by the merge
+  distinct()
+
+clean_data_for_node
+
+
+#replace the community ID with the descriptive names
+
+clean_data_for_node <- clean_data_for_node |>
+  mutate(community_name = recode(communityId, !!!name_for_commuityid))
+
+clean_data_for_node
+```
+
+The graphing needs specific column names to match information, so update the column names before graphing 
+```{r}
+#pull out only the columns needed for graping
+clean_data_for_node <- clean_data_for_node |> select(npi,community_name, label)
+clean_data_for_node
+
+#rename to match name formating for graphing
+colnames(clean_data_for_node) <- c("id", "group", "title")
+clean_data_for_node
+
+#add a blank label column to remove the text on the graphing
+clean_data_for_node <- clean_data_for_node |> mutate(label= "")
+
+#remoce and duplicate id
+clean_data_for_node <- clean_data_for_node |> distinct()
+
+clean_data_for_node
+
+
+```
+
+Create the visual graph 
+```{r}
+
+visNetwork(clean_data_for_node, clean_data_for_edges, width="100%") |> 
+  #create the graph
+  visIgraphLayout() |>
+  #change visual format for nodes
+  visNodes(shape= 'dot') |>
+  #change visual format for edges
+  visEdges(color='gray') |>
+  #Create a drop down menu 
+  visOptions(highlightNearest = list(enabled = T, degree = 1, hover = T),
+             #Sets which table variable to group based on a drop-down menu
+             selectedBy = "group") |> 
+  #define the starting seed so it groups the same way each time 
+  visLayout(randomSeed=1) |>
+  #create global for all groups
+  visGroups() |>
+  #add a legend 
+  visLegend() |> 
+
+  #add navigation tools 
+  visInteraction (navigationButtons = TRUE) |> 
+  visClusteringByGroup(groups, force= TRUE) |>
+
+#add code to make dot clustering easier (so there is no overlap)
+  visPhysics(stabilization = FALSE, solver = "barnesHut", barnesHut = list(gravitationalConstant = -10000))
+```
