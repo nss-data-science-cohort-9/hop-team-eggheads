@@ -3,20 +3,34 @@
 
 # --- Shiny Server ---
 server <- function(input, output, session) {
+  
+  
+  # #Filter data based on chosen specialty
+  # df_for_plot <- reactive({
+  #   req(input$pcp_specialty)
+  # if(input$pcp_specialty == "All"){
+  #   df_for_plot <- hop_referral_pcp_hosp
+  # } else if(input$pcp_specialty != "All"){
+  #   df_for_plot <- hop_referral_pcp_hosp |> 
+  #     filter(pcp_class == input$pcp_specialty)
+  # }
+  # })
+  
+  #Sarah code---------- FOR NETWORK GRAPH
   output$network_plot <- renderVisNetwork({
-  # Render the network using renderVisNetwork
-    #----- filter base dataset based on user input 
-    #filter based on specialty choice
+    # Render the network using renderVisNetwork
     
-    #define this as the default
+    ##------- filter data based on chosen value 
+    #set default
     df_for_plot <- hop_referral_pcp_hosp
     
-    if(input$pcp_specialty != "All"){
-      df_for_plot <- hop_referral_pcp_hosp
-    } else if(input$pcp_specialty != "All"){
-      df_for_plot <- hop_referral_pcp_hosp |> 
-        filter(pcp_class == input$pcp_specialty)
-    }
+    df_for_plot <-
+      if(input$pcp_specialty == "All"){
+        df_for_plot <- hop_referral_pcp_hosp
+      } else if(input$pcp_specialty != "All"){
+        df_for_plot <- hop_referral_pcp_hosp |>
+          filter(pcp_class == input$pcp_specialty)
+      }
     
     #--- Prepare dataset for EDGES --------------------------------------
     #Select only the 'to' and 'from' npi from the dataset, and the number of patients for the edges
@@ -57,8 +71,8 @@ server <- function(input, output, session) {
       distinct()
     
     #replace the community ID with the descriptive names
-    clean_data_or_node <- clean_data_for_node |>
-      mutate(community_name = recode(communityId, !!!name_for_commuityid))
+    clean_data_for_node <- clean_data_for_node |>
+      mutate(community_name = recode(communityId, !!!name_for_cid))
     
     #pull out only the columns needed for graping
     clean_data_for_node <- clean_data_for_node |> select(npi,community_name, label)
@@ -73,7 +87,7 @@ server <- function(input, output, session) {
     clean_data_for_node <- clean_data_for_node |> distinct()
     
     ##--- Input data into Visnetwork graph -----------------
-    visNetwork(clean_data_for_node, clean_data_for_edges, width="100%") |> 
+    visNetwork(clean_data_for_node, clean_data_for_edges, width="100%") |> #, width="100%"
       #create the graph
       visIgraphLayout() |>
       #change visual format for nodes
@@ -93,102 +107,92 @@ server <- function(input, output, session) {
       #add navigation tools 
       visInteraction (navigationButtons = TRUE) |> 
       visClusteringByGroup(groups, force= TRUE) |>
-      
+      #visConfigure(enabled = TRUE) |>
       #add code to make dot clustering easier (so there is no overlap)
       visPhysics(stabilization = FALSE, solver = "barnesHut", barnesHut = list(gravitationalConstant = -10000))
-  }) #close 
-} #closer server output$network_plot
+  }) #close visrenderplot
+  
+  ##---- ADD DATA TABLE AT BOTTOM ------ 
+  #output$selectedTable <- renderDataTable({
+  #})
+  
+  
+  
+  
+  ##------ Anitha Code----------------
+  
+  #anitha code-----------
+  filtered_data <- reactive({
+    req(input$specialtyPicker)
+    hop_referral_pcp_hosp %>%
+      filter(!is.na(pcp_special) & (pcp_special %in% input$specialtyPicker))
+    
+  })
+  output$demographicsCirclePlot <- renderPlotly({
+    data <- filtered_data()
+    req(nrow(data) > 0)
+    
+    # Determine cluster centers using k-means
+    # k = number of unique hospital communities
+    k <- length(unique(data$hospital_communityid))
+    
+    # Assign numeric ID to each hospital community
+    data$hospital_factor <- as.numeric(factor(data$hospital_communityid))
+    
+    # Run k-means on the hospital IDs to get cluster centers
+    set.seed(123)  # for reproducibility
+    km <- kmeans(data$hospital_factor, centers = k)
+    
+    plot_data <- data %>%
+      mutate(
+        cx = km$centers[km$cluster],   # cluster center x
+        cy = km$cluster * 3,           # cluster center y, spaced vertically
+        x = cx + rnorm(n(), 0, 0.5),   # spread within cluster
+        y = cy + rnorm(n(), 0, 0.5)
+      )
+    
+    # Compute circle vertices (optional if you want polygon shapes)
+    #vertices <- circleLayoutVertices(all_circles, npoints = 50)
+    # Plotly scatter
+    p <- plot_ly(
+      data = plot_data,
+      x = ~x,
+      y = ~y,
+      type = 'scatter',
+      mode = 'markers',
+      color = ~as.factor(hospital_communityid),
+      colors= rainbow(13),
+      marker = list(
+        size = ~sqrt(patient_count)*2,
+        # color = ~as.factor(hospital_communityid),
+        # colors= "Viridis",
+        line = list(width = 1, color = 'black'),
+        opacity = 0.7
+      ),
+      text = ~paste(
+        "Hospital:", to_organization,
+        "<br>PCP:", full_name,
+        "<br>Specialty:", pcp_special,
+        "<br>Patients:", patient_count,
+        "<br>Transactions:", transaction_count,
+        "<br>Avg Wait Days:", round(average_day_wait, 1)
+      ),
+      hoverinfo = "text",
+      showlegend = FALSE
+    )
+    p %>%
+      layout(
+        xaxis = list(title = "", showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+        yaxis = list(title = "", showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+        plot_bgcolor = '#F8F8F8',
+        xaxis = list(
+          zerolinecolor = '#ffff',
+          zerolinewidth = 2,
+          gridcolor = 'ffff'),
+        yaxis = list(
+          zerolinecolor = '#ffff',
+          zerolinewidth = 2,
+          gridcolor = 'ffff'))
+  })#render plotly
+} #closer server page
 
-##---- ADD DATA TABLE AT BOTTOM ------ 
-#output$selectedTable <- renderDataTable({
-#})
-
-#   ### [Create data table on the main page]
-#   output$selectedTable <- renderDataTable({
-#     
-#     
-#     #Create monster plot calculations, same process as earlier-------------------
-#     #create the 4-party list based on selected values 
-#     full_build_select_party = c(input$class_variable_1, 
-#                                 input$class_variable_2, 
-#                                 input$class_variable_3, 
-#                                 input$class_variable_4)
-#     
-#     #Create title
-#     title <- glue("Monster challenge rating based on 4-party total damage output")
-#     
-#     #Create the total party damage prediction graph based on the selected class variables---------------
-#     #filter out selected builds from the full simulation data 
-#     
-#     only_party_sim <- sim_results |> 
-#       filter(build_name %in% full_build_select_party)
-#     
-#     #for each target_ac, add up all the damage from EACH encounter across the whole party 
-#     ## groupby by encounter number, than sum all the 'total damage'
-#     
-#     party_combo_sim <- only_party_sim |> 
-#       group_by(target_ac, encounter_num) |> 
-#       summarise(total_party_damage= sum(total_dmg), 
-#                 .groups = "drop")
-#     
-#     ## Create summary dataframe based on distrubution of combined encounter modeling
-#     total_dmg_dist <- party_combo_sim |>
-#       group_by(target_ac) |>
-#       summarize(min_val = min(total_party_damage),
-#                 max_val = max(total_party_damage),
-#                 q25= quantile(total_party_damage, 0.25),
-#                 median= median(total_party_damage),
-#                 q75= quantile(total_party_damage, 0.75))
-#     
-#     ## Create monster challenge rating based on where the HP falls on the total_damage distribution
-#     #rename monster column for easier merging
-#     monster_data_merge <- monster_data_maxac |>
-#       rename(target_ac = AC)
-#     
-#     #merge the summary stats with monster info based on AC
-#     mon_with_party_stat <- left_join(monster_data_merge,
-#                                      total_dmg_dist,
-#                                      by = "target_ac")
-#     #rename AC column for easier graphing
-#     mon_with_party_stat <- mon_with_party_stat |> rename(AC= target_ac)
-#     
-#     #create a challenge rating using case_when based on the summary statistics
-#     mon_party_challenge <- mon_with_party_stat |>
-#       mutate(challenge_rate = case_when (HP<q25 ~ 'easy',
-#                                          HP >=q25 & HP <= q75 ~ 'moderate',
-#                                          HP > q75 & HP <= (2*max_val)~ 'hard',
-#                                          HP >= (2*max_val) ~'impossible')
-#       )
-#     
-#     #convert challenge rating to a factor value
-#     mon_party_challenge <- mon_party_challenge|>
-#       mutate (challenge_rate= as.factor(challenge_rate))
-#     
-#     #update dataframe for table widget with challenge rating 
-#     monster_challenge <- mon_party_challenge |> relocate(challenge_rate) |> rename("challenge rating"= challenge_rate) 
-#     
-#     #Table: Show monster stats with challenge rating -----------------------------------------
-#     selected_data <- monster_challenge
-#     
-#     # ## update displayed data table based on plotly selection
-#     # selected_data <- reactive({
-#     #   # Get the selected points' keys from plot with source "A"
-#     #   event_data_selected <- event_data(event = "plotly_selected",
-#     #                                     source = "chmon")
-#     #
-#     #   #Create a condition to filter data table based on ggplot selection
-#     #   if (is.null(event_data_selected)) {
-#     #     # Return all data if nothing is selected or the selection is cleared
-#     #     return(monster_data_maxac)
-#     #   }
-#     #   else {
-#     #     selected_keys <- event_data_selected$key
-#     #     # Filter the original data frame to keep only selected rows
-#     #     monster_data_maxac |>
-#     #       filter(Name %in% selected_keys)
-#     #   }
-#     # })
-#     
-#     #view table based on previous conditionals
-#     selected_data
-#   }) #Datatable section

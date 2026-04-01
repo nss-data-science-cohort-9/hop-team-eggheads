@@ -319,12 +319,13 @@ clean_data_for_node <- clean_data_for_node |> mutate(label= "")
 clean_data_for_node <- clean_data_for_node |> distinct()
 
 clean_data_for_node
-
-
 ```
 
 Create the visual graph 
 ```{r}
+
+### check specialty filter 
+
 
 visNetwork(clean_data_for_node, clean_data_for_edges, width="100%") |> 
   #create the graph
@@ -337,7 +338,7 @@ visNetwork(clean_data_for_node, clean_data_for_edges, width="100%") |>
   visOptions(highlightNearest = list(enabled = T, degree = 1, hover = T),
              #Sets which table variable to group based on a drop-down menu
              selectedBy = "group") |> 
-  #define the starting seed so it groups the same way each time 
+  #define the starting seed so it groups the same way each time
   visLayout(randomSeed=1) |>
   #create global for all groups
   visGroups() |>
@@ -345,7 +346,7 @@ visNetwork(clean_data_for_node, clean_data_for_edges, width="100%") |>
   visLegend() |> 
   #add navigation tools 
   visInteraction (navigationButtons = TRUE) |> 
-  visClusteringByGroup(groups, force= TRUE) |>
+  visClusteringByGroup(groups, force= FALSE) |>
 
 #add code to make dot clustering easier (so there is no overlap)
   visPhysics(stabilization = FALSE, solver = "barnesHut", barnesHut = list(gravitationalConstant = -10000))
@@ -371,5 +372,18 @@ user_choice[1]
 ```
 ```{r}
 hop_referral_pcp_hosp |> filter(pcp_class == user_choice[1])
+```
+
+```{r}
+hop_referral_merged_pcp_hosp
+
+write.csv(hop_referral_merged_pcp_hosp, file = "final_hop_team_dataset.csv", row.names = FALSE)
+```
+```{r}
+name_for_commuityid
+
+name_for_cid <- setNames(names(name_for_commuityid), name_for_commuityid)
+name_for_cid
+
 ```
 
