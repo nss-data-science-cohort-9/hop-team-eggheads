@@ -377,13 +377,26 @@ hop_referral_pcp_hosp |> filter(pcp_class == user_choice[1])
 ```{r}
 hop_referral_merged_pcp_hosp
 
-write.csv(hop_referral_merged_pcp_hosp, file = "final_hop_team_dataset.csv", row.names = FALSE)
+#write.csv(hop_referral_merged_pcp_hosp, file = "final_hop_team_dataset.csv", row.names = FALSE)
 ```
 ```{r}
 name_for_commuityid
 
 name_for_cid <- setNames(names(name_for_commuityid), name_for_commuityid)
 name_for_cid
+name_for_cid
 
+```
+```{r}
+hop_referral_pcp_hosp
+
+#replace the community ID with the descriptive names
+hop_referral_pcp_hosp <- hop_referral_pcp_hosp |>
+  mutate(community_name = recode(hospital_communityid, !!!name_for_cid))
+
+hop_referral_pcp_hosp
+
+all_cluster_names <- hop_referral_pcp_hosp |> distinct(community_name) |> pull() |> sort()
+all_cluster_names 
 ```
 

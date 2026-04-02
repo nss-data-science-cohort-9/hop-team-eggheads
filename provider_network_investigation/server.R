@@ -3,34 +3,17 @@
 
 # --- Shiny Server ---
 server <- function(input, output, session) {
-  
-  
-  # #Filter data based on chosen specialty
-  # df_for_plot <- reactive({
-  #   req(input$pcp_specialty)
-  # if(input$pcp_specialty == "All"){
-  #   df_for_plot <- hop_referral_pcp_hosp
-  # } else if(input$pcp_specialty != "All"){
-  #   df_for_plot <- hop_referral_pcp_hosp |> 
-  #     filter(pcp_class == input$pcp_specialty)
-  # }
-  # })
-  
-  #Sarah code---------- FOR NETWORK GRAPH
+
+  #CODE FOR NETWORK PLOT GRAPH------------
   output$network_plot <- renderVisNetwork({
     # Render the network using renderVisNetwork
     
-    ##------- filter data based on chosen value 
+    palette()# obtain the current palette
+    myPalette <- palette(rainbow(13))
+    
+    ##-- filter data based on chosen value --------
     #set default
     df_for_plot <- hop_referral_pcp_hosp
-    
-    df_for_plot <-
-      if(input$pcp_specialty == "All"){
-        df_for_plot <- hop_referral_pcp_hosp
-      } else if(input$pcp_specialty != "All"){
-        df_for_plot <- hop_referral_pcp_hosp |>
-          filter(pcp_class == input$pcp_specialty)
-      }
     
     #--- Prepare dataset for EDGES --------------------------------------
     #Select only the 'to' and 'from' npi from the dataset, and the number of patients for the edges
@@ -59,7 +42,6 @@ server <- function(input, output, session) {
     name_for_nodes <- df_for_plot |> select(to_npi, to_organization)
     
     hosp_pcp_id_node <- left_join(pcp_id_node, name_for_nodes, by= join_by (npi == to_npi))
-    hosp_pcp_id_node
     
     #pull out only values needed for the graphing
     clean_data_for_node <- hosp_pcp_id_node |>
@@ -87,37 +69,42 @@ server <- function(input, output, session) {
     clean_data_for_node <- clean_data_for_node |> distinct()
     
     ##--- Input data into Visnetwork graph -----------------
-    visNetwork(clean_data_for_node, clean_data_for_edges, width="100%") |> #, width="100%"
+    visNetwork(clean_data_for_node, 
+               clean_data_for_edges, 
+               width="100%", 
+               main = "Number of patient referrals between network groups") |> #, width="100%"
       #create the graph
-      visIgraphLayout() |>
+      visIgraphLayout(layout = "layout_with_fr", type = "full") |> #, type = "full")
       #change visual format for nodes
-      visNodes(shape= 'dot') |>
+      visNodes(shape= 'dot', size=20, fixed = FALSE) |> #fixed = TRUE
       #change visual format for edges
       visEdges(color='gray') |>
       #Create a drop down menu 
-      visOptions(highlightNearest = list(enabled = T, degree = 1, hover = T),
+      visOptions(#highlightNearest = list(enabled = T, hover = T),
                  #Sets which table variable to group based on a drop-down menu
-                 selectedBy = "group") |> 
+                 selectedBy = "group", nodesIdSelection = TRUE,  
+                 collapse = list(enabled = TRUE, keepCoord = F)) |> 
       #define the starting seed so it groups the same way each time 
       visLayout(randomSeed=1) |>
       #create global for all groups
-      visGroups() |>
+      visGroups()|>
+      #Define each cluser group
+      #visGroups(groupname= "", color="") |>
       #add a legend 
-      visLegend() |> 
+      visLegend(useGroups = TRUE, 
+                ncol=2, 
+                zoom=FALSE, 
+                main= list(text= "Community algorithm groups (click to expand)")) |> 
       #add navigation tools 
       visInteraction (navigationButtons = TRUE) |> 
-      visClusteringByGroup(groups, force= TRUE) |>
+      visClusteringByGroup(groups= all_cluster_names, label= "", color=myPalette) |> # force= TRUE
       #visConfigure(enabled = TRUE) |>
       #add code to make dot clustering easier (so there is no overlap)
-      visPhysics(stabilization = FALSE, solver = "barnesHut", barnesHut = list(gravitationalConstant = -10000))
+      #visPhysics(stabilization = FALSE, solver = "forceAtlas2Based", forceAtlas2Based = list(springConstant = 0.785))
+      #visPhysics(stabilization = FALSE, solver = "barnesHut", barnesHut = list(gravitationalConstant = -1000))
+      visPhysics(stabilization = FALSE, solver = "repulsion", repulsion = list(nodeDistance = 100))
+      #visPhysics(enabled= FALSE))
   }) #close visrenderplot
-  
-  ##---- ADD DATA TABLE AT BOTTOM ------ 
-  #output$selectedTable <- renderDataTable({
-  #})
-  
-  
-  
   
   ##------ Anitha Code----------------
   
@@ -194,5 +181,65 @@ server <- function(input, output, session) {
           zerolinewidth = 2,
           gridcolor = 'ffff'))
   })#render plotly
+  
+  ##----------------------------
+  ###--- Bar Plot tab code (cat)
+  
+  #code to implement choice from sidebar dropdown
+  # cat_filter_data <- reactive({
+  #   req(input$demographicsMeasurePicker)
+  #   final_hop.df %>%
+  #     filter(!is.na(pcp_special) & (pcp_special %in% demographicsMeasurePicker))
+  # })
+  
+  output$demographicsDiversity = renderHighchart({
+    point.format = paste(
+      " ({point.num_patients} patients referred)</span><br/><span>",
+      input$demographicsMeasurePicker,
+      ":\u00A0{point.y}</span>",
+      sep = ""
+    )
+    
+    # taking df groupby communityId and SUM patient count - make new df out of that and call that in my highchart call
+    
+    cat_filter_data <-final_hop.df
+    
+    hop_df <- cat_filter_data %>% 
+      group_by(community_name) %>% 
+      summarise(num_patients = sum(patient_count)) %>% 
+      arrange(desc(num_patients)) %>% 
+      drop_na()
+    
+    final_hop.df <- cat_filter_data %>%
+      mutate(
+        communityId = as.character(community_name),
+        to_organization = as.character(to_organization),
+        pcp_special = as.character(pcp_special)
+      )
+    
+    # Create lookup: communityId → hospital name
+    hospital_lookup <- final_hop.df %>%
+      select(community_name, to_organization) %>%
+      distinct()
+    # hop_df
+    
+    # Make the plot.
+    hc = highchart() %>%
+      hc_chart(type = "bar") %>%
+      hc_xAxis(categories = hop_df$community_name) %>%
+      hc_add_series(pointPadding = 0,
+                    data = hop_df %>%
+                      mutate(y = num_patients,
+                             num_pieces = num_patients),
+                    colorByPoint = T,
+                    colors = rgb(colorRamp(c("black", "white"))(rescale(hop_df$num_patients, to=c(0,1))),
+                                 maxColorValue = 255),
+                    borderColor = "#000000") %>%
+      hc_tooltip(headerFormat = "<span><b>{point.key}</b>",
+                 pointFormat = point.format,
+                 valueDecimals = 2) %>%
+      hc_legend(enabled = F)
+  })
+  
 } #closer server page
 
